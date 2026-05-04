@@ -1,4 +1,5 @@
 from collections import defaultdict
+import random
 
 master_Tile = [
     [0, 1, 0, 2, 0],
@@ -162,3 +163,5 @@ if __name__ == '__main__':
     placer = Placer(sys.argv[1])
     print(f"Components loaded: {len(placer.components)}")
     print(f"Nets loaded: {len(placer.nets)}")
+    placer.initial_placement()
+    placer.render()
