@@ -145,6 +145,75 @@ class Placer:
                 self.grid[y][x] = cell_id
                 self.empty_by_type[t].discard((x, y))  # mark site as occupied
 
+    def compute_hpwl(self):
+        total = 0
+        for net in self.nets:
+            xs = [self.components[i].x for i in net]
+            ys = [self.components[i].y for i in net]
+            total += (max(xs) - min(xs)) + (max(ys) - min(ys))
+        return total
+
+    def _net_hpwl(self, net_idx):
+        net = self.nets[net_idx]
+        xs = [self.components[i].x for i in net]
+        ys = [self.components[i].y for i in net]
+        return (max(xs) - min(xs)) + (max(ys) - min(ys))
+
+    def hpwl_delta(self, id_a, id_b, xa, ya, xb, yb):
+        affected = set(self.cell_to_nets[id_a])
+        if id_b is not None:
+            affected |= set(self.cell_to_nets[id_b])
+
+        cost_before = sum(self._net_hpwl(ni) for ni in affected)
+
+        self.apply_move(id_a, id_b, xa, ya, xb, yb)
+
+        cost_after = sum(self._net_hpwl(ni) for ni in affected)
+
+        self.apply_move(id_a, id_b, xb, yb, xa, ya)
+
+        return cost_after - cost_before
+
+
+    def generate_move(self):
+        id_a = random.choice(self.movable_cells)
+        comp_a = self.components[id_a]
+        t = comp_a.type
+
+        same_type_cells = [c.id for c in self.components.values()
+                        if not c.fixed and c.type == t and c.id != id_a]
+        empty_sites = list(self.empty_by_type[t])
+
+        candidates = same_type_cells + empty_sites  
+        if not candidates:
+            return None  
+        target = random.choice(candidates)
+
+        if isinstance(target, tuple):
+            xb, yb = target
+            return (id_a, None, comp_a.x, comp_a.y, xb, yb)
+        else:
+            comp_b = self.components[target]
+            return (id_a, target, comp_a.x, comp_a.y, comp_b.x, comp_b.y)
+
+
+    def apply_move(self, id_a, id_b, xa, ya, xb, yb):
+        t = self.components[id_a].type
+
+        self.grid[ya][xa] = id_b
+        self.grid[yb][xb] = id_a
+
+        self.components[id_a].x = xb
+        self.components[id_a].y = yb
+
+        if id_b is not None:
+            self.components[id_b].x = xa
+            self.components[id_b].y = ya
+        else:
+            self.empty_by_type[t].add((xa, ya))
+            self.empty_by_type[t].discard((xb, yb))
+
+
 
     def render(self):
         for y in range(self.ny):
