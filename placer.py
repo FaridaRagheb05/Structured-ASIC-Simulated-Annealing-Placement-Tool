@@ -134,6 +134,25 @@ class Placer:
                 self.grid[y][x] = cell_id
                 self.empty_by_type[t].discard((x, y))  # mark site as occupied
 
+    def render(self):
+        for y in range(self.ny):
+            row = []
+            for x in range(self.nx):
+                cid = self.grid[y][x]
+                if cid is None:
+                    if (x == 0 or x == self.nx-1 or
+                        y == 0 or y == self.ny-1):
+                        row.append(' ')
+                    else:
+                        row.append('.')
+                else:
+                    comp = self.components[cid]
+                    if comp.fixed:
+                        row.append('P')
+                    else:
+                        row.append(str(comp.type))
+            print(''.join(row))
+
 if __name__ == '__main__':
     import sys
     if len(sys.argv) < 2:
