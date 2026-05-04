@@ -21,7 +21,7 @@ class Component:
         self.x = X_Coord
         self.y = Y_Coord
         self.fixed = Fixed  # True if pin but false if (movable) cell
-
+  
 
 class Placer:
     def __init__(self, netlist_path):
@@ -37,9 +37,14 @@ class Placer:
 
         # type -> set of (x,y) sites that are currently empty
         self.empty_by_type = defaultdict(set)
-
+        self.cell_to_nets = defaultdict(list)
+        self.movable_cells = [] 
+        
         self._parse_Input(netlist_path)
         self._build_Grid()
+        self._build_cell_to_nets()
+        self.movable_cells = [c.id for c in self.components.values() if not c.fixed]
+
 
     def _parse_Input(self, input_File):
         with open(input_File) as f:
@@ -113,6 +118,11 @@ class Placer:
         counts = {t: len(v) for t, v in self.sites_by_type.items()}
         print(f"Grid: Core sites by type: {counts}")
 
+    def _build_cell_to_nets(self):
+        for net_idx, net in enumerate(self.nets):
+            for cell_id in net:
+                self.cell_to_nets[cell_id].append(net_idx)
+
     def initial_placement(self, seed=42):
         random.seed(seed)
         
@@ -134,6 +144,7 @@ class Placer:
                 comp.y = y
                 self.grid[y][x] = cell_id
                 self.empty_by_type[t].discard((x, y))  # mark site as occupied
+
 
     def render(self):
         for y in range(self.ny):
