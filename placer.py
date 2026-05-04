@@ -1,6 +1,7 @@
 from collections import defaultdict
 import random
 import math
+import copy
 
 master_Tile = [
     [0, 1, 0, 2, 0],
@@ -160,6 +161,8 @@ class Placer:
         ys = [self.components[i].y for i in net]
         return (max(xs) - min(xs)) + (max(ys) - min(ys))
 
+
+
     def hpwl_delta(self, id_a, id_b, xa, ya, xb, yb):
         affected = set(self.cell_to_nets[id_a])
         if id_b is not None:
@@ -167,29 +170,54 @@ class Placer:
 
         cost_before = sum(self._net_hpwl(ni) for ni in affected)
 
-        self.apply_move(id_a, id_b, xa, ya, xb, yb)
+        # Temporarily update coordinates to compute delta without touching grid or empty_by_type
+        self.components[id_a].x = xb
+        self.components[id_a].y = yb
+        if id_b is not None:
+            self.components[id_b].x = xa
+            self.components[id_b].y = ya
 
         cost_after = sum(self._net_hpwl(ni) for ni in affected)
 
-        self.apply_move(id_a, id_b, xb, yb, xa, ya)
+        # Restore coordinates
+        self.components[id_a].x = xa
+        self.components[id_a].y = ya
+        if id_b is not None:
+            self.components[id_b].x = xb
+            self.components[id_b].y = yb
 
         return cost_after - cost_before
-    #REVISE
+    
+
+    
     def _accept_move(self, delta_cost, temperature):
         if delta_cost <= 0:
             return True
         return random.random() < math.exp(-delta_cost / temperature)
 
-    def anneal(self, T_initial=1.0, T_final=1e-3, moves_per_T=1000, cooling_rate=0.95, verbose=False):
-        """Run simulated annealing with geometric cooling."""
-        T = T_initial
-        current_cost = self.compute_hpwl()
+    def anneal(self, cooling_rate=0.95, verbose=False):
+        initial_cost = self.compute_hpwl()
+        num_nets = len(self.nets)
+
+        
+        T = 500 * initial_cost
+        
+        T_final = (5e-5 * initial_cost) / num_nets
+
+        moves_per_T = 20 * len(self.movable_cells)
+
+        current_cost = initial_cost
         best_cost = current_cost
-        best_positions = {cid: (comp.x, comp.y) for cid, comp in self.components.items()}
+
+        best_positions = {
+            cid: (comp.x, comp.y)
+            for cid, comp in self.components.items()
+        }
+
         history = [(T, current_cost)]
 
         while T > T_final:
-            for move_idx in range(moves_per_T):
+            for _ in range(moves_per_T):
                 move = self.generate_move()
                 if move is None:
                     continue
@@ -197,32 +225,49 @@ class Placer:
                 id_a, id_b, xa, ya, xb, yb = move
                 delta = self.hpwl_delta(id_a, id_b, xa, ya, xb, yb)
 
-                if self._accept_move(delta, T):
+                if delta <= 0 or random.random() < math.exp(-delta / T):
                     self.apply_move(id_a, id_b, xa, ya, xb, yb)
                     current_cost += delta
+
                     if current_cost < best_cost:
                         best_cost = current_cost
-                        best_positions = {cid: (comp.x, comp.y) for cid, comp in self.components.items()}
-                # rejected moves are already reverted by hpwl_delta
+                        best_positions = {
+                            cid: (comp.x, comp.y)
+                            for cid, comp in self.components.items()
+                        }
 
             T *= cooling_rate
             history.append((T, current_cost))
-            if verbose:
-                print(f"T={T:.6f} cost={current_cost}")
 
-        # restore best found placement
-        for cid, pos in best_positions.items():
-            self.components[cid].x, self.components[cid].y = pos
+            if verbose:
+                print(f"T={T:.4f}, cost={current_cost}")
+
+        # Restore best solution
+        for cid, (x, y) in best_positions.items():
+            self.components[cid].x = x
+            self.components[cid].y = y
+
         self._rebuild_grid_from_components()
+        self._rebuild_empty_sites()
 
         return best_cost, history
+        
+    def _rebuild_empty_sites(self):
+        self.empty_by_type = defaultdict(set)
+        for y in range(1, self.ny - 1):
+            for x in range(1, self.nx - 1):
+                if self.grid[y][x] is None:
+                    t = site_Type(x, y)
+                    self.empty_by_type[t].add((x, y))
 
     def _rebuild_grid_from_components(self):
         self.grid = [[None] * self.nx for _ in range(self.ny)]
         for comp in self.components.values():
             if comp.x is not None and comp.y is not None:
-                self.grid[comp.y][comp.x] = comp.id
-    #TILL HERE
+                    self.grid[comp.y][comp.x] = comp.id
+    
+
+    
     def generate_move(self):
         id_a = random.choice(self.movable_cells)
         comp_a = self.components[id_a]
@@ -248,16 +293,20 @@ class Placer:
     def apply_move(self, id_a, id_b, xa, ya, xb, yb):
         t = self.components[id_a].type
 
+        # Update grid
         self.grid[ya][xa] = id_b
         self.grid[yb][xb] = id_a
 
+        # Update component A
         self.components[id_a].x = xb
         self.components[id_a].y = yb
 
         if id_b is not None:
+            # Swap with another cell
             self.components[id_b].x = xa
             self.components[id_b].y = ya
         else:
+            # Swap with empty (in order to maintain empty_by_type correctly)
             self.empty_by_type[t].add((xa, ya))
             self.empty_by_type[t].discard((xb, yb))
 
@@ -292,4 +341,12 @@ if __name__ == '__main__':
     print(f"Components loaded: {len(placer.components)}")
     print(f"Nets loaded: {len(placer.nets)}")
     placer.initial_placement()
+
+    initial_cost = placer.compute_hpwl()
+    print("Initial HPWL:", initial_cost)
+
+    best_cost, history = placer.anneal(cooling_rate=0.95, verbose=True)
+
+    print("Final HPWL:", best_cost)
+
     placer.render()
