@@ -1,0 +1,4 @@
+Parsed 150 components, 120 nets, grid 52x52, 20 pins
+Grid: Core sites by type: {0: 1500, 1: 600, 2: 300, 3: 100}
+Components loaded: 150
+Nets loaded: 120
