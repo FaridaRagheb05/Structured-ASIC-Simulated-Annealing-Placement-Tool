@@ -1,5 +1,6 @@
 from collections import defaultdict
 import random
+import math
 
 master_Tile = [
     [0, 1, 0, 2, 0],
@@ -173,8 +174,55 @@ class Placer:
         self.apply_move(id_a, id_b, xb, yb, xa, ya)
 
         return cost_after - cost_before
+    #REVISE
+    def _accept_move(self, delta_cost, temperature):
+        if delta_cost <= 0:
+            return True
+        return random.random() < math.exp(-delta_cost / temperature)
 
+    def anneal(self, T_initial=1.0, T_final=1e-3, moves_per_T=1000, cooling_rate=0.95, verbose=False):
+        """Run simulated annealing with geometric cooling."""
+        T = T_initial
+        current_cost = self.compute_hpwl()
+        best_cost = current_cost
+        best_positions = {cid: (comp.x, comp.y) for cid, comp in self.components.items()}
+        history = [(T, current_cost)]
 
+        while T > T_final:
+            for move_idx in range(moves_per_T):
+                move = self.generate_move()
+                if move is None:
+                    continue
+
+                id_a, id_b, xa, ya, xb, yb = move
+                delta = self.hpwl_delta(id_a, id_b, xa, ya, xb, yb)
+
+                if self._accept_move(delta, T):
+                    self.apply_move(id_a, id_b, xa, ya, xb, yb)
+                    current_cost += delta
+                    if current_cost < best_cost:
+                        best_cost = current_cost
+                        best_positions = {cid: (comp.x, comp.y) for cid, comp in self.components.items()}
+                # rejected moves are already reverted by hpwl_delta
+
+            T *= cooling_rate
+            history.append((T, current_cost))
+            if verbose:
+                print(f"T={T:.6f} cost={current_cost}")
+
+        # restore best found placement
+        for cid, pos in best_positions.items():
+            self.components[cid].x, self.components[cid].y = pos
+        self._rebuild_grid_from_components()
+
+        return best_cost, history
+
+    def _rebuild_grid_from_components(self):
+        self.grid = [[None] * self.nx for _ in range(self.ny)]
+        for comp in self.components.values():
+            if comp.x is not None and comp.y is not None:
+                self.grid[comp.y][comp.x] = comp.id
+    #TILL HERE
     def generate_move(self):
         id_a = random.choice(self.movable_cells)
         comp_a = self.components[id_a]
