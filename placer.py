@@ -1,4 +1,5 @@
 from collections import defaultdict
+import random
 
 master_Tile = [
     [0, 1, 0, 2, 0],
@@ -20,7 +21,7 @@ class Component:
         self.x = X_Coord
         self.y = Y_Coord
         self.fixed = Fixed  # True if pin but false if (movable) cell
-
+  
 
 class Placer:
     def __init__(self, netlist_path):
@@ -36,9 +37,14 @@ class Placer:
 
         # type -> set of (x,y) sites that are currently empty
         self.empty_by_type = defaultdict(set)
-
+        self.cell_to_nets = defaultdict(list)
+        self.movable_cells = [] 
+        
         self._parse_Input(netlist_path)
         self._build_Grid()
+        self._build_cell_to_nets()
+        self.movable_cells = [c.id for c in self.components.values() if not c.fixed]
+
 
     def _parse_Input(self, input_File):
         with open(input_File) as f:
@@ -112,6 +118,11 @@ class Placer:
         counts = {t: len(v) for t, v in self.sites_by_type.items()}
         print(f"Grid: Core sites by type: {counts}")
 
+    def _build_cell_to_nets(self):
+        for net_idx, net in enumerate(self.nets):
+            for cell_id in net:
+                self.cell_to_nets[cell_id].append(net_idx)
+
     def initial_placement(self, seed=42):
         random.seed(seed)
         
@@ -134,6 +145,95 @@ class Placer:
                 self.grid[y][x] = cell_id
                 self.empty_by_type[t].discard((x, y))  # mark site as occupied
 
+    def compute_hpwl(self):
+        total = 0
+        for net in self.nets:
+            xs = [self.components[i].x for i in net]
+            ys = [self.components[i].y for i in net]
+            total += (max(xs) - min(xs)) + (max(ys) - min(ys))
+        return total
+
+    def _net_hpwl(self, net_idx):
+        net = self.nets[net_idx]
+        xs = [self.components[i].x for i in net]
+        ys = [self.components[i].y for i in net]
+        return (max(xs) - min(xs)) + (max(ys) - min(ys))
+
+    def hpwl_delta(self, id_a, id_b, xa, ya, xb, yb):
+        affected = set(self.cell_to_nets[id_a])
+        if id_b is not None:
+            affected |= set(self.cell_to_nets[id_b])
+
+        cost_before = sum(self._net_hpwl(ni) for ni in affected)
+
+        self.apply_move(id_a, id_b, xa, ya, xb, yb)
+
+        cost_after = sum(self._net_hpwl(ni) for ni in affected)
+
+        self.apply_move(id_a, id_b, xb, yb, xa, ya)
+
+        return cost_after - cost_before
+
+
+    def generate_move(self):
+        id_a = random.choice(self.movable_cells)
+        comp_a = self.components[id_a]
+        t = comp_a.type
+
+        same_type_cells = [c.id for c in self.components.values()
+                        if not c.fixed and c.type == t and c.id != id_a]
+        empty_sites = list(self.empty_by_type[t])
+
+        candidates = same_type_cells + empty_sites  
+        if not candidates:
+            return None  
+        target = random.choice(candidates)
+
+        if isinstance(target, tuple):
+            xb, yb = target
+            return (id_a, None, comp_a.x, comp_a.y, xb, yb)
+        else:
+            comp_b = self.components[target]
+            return (id_a, target, comp_a.x, comp_a.y, comp_b.x, comp_b.y)
+
+
+    def apply_move(self, id_a, id_b, xa, ya, xb, yb):
+        t = self.components[id_a].type
+
+        self.grid[ya][xa] = id_b
+        self.grid[yb][xb] = id_a
+
+        self.components[id_a].x = xb
+        self.components[id_a].y = yb
+
+        if id_b is not None:
+            self.components[id_b].x = xa
+            self.components[id_b].y = ya
+        else:
+            self.empty_by_type[t].add((xa, ya))
+            self.empty_by_type[t].discard((xb, yb))
+
+
+
+    def render(self):
+        for y in range(self.ny):
+            row = []
+            for x in range(self.nx):
+                cid = self.grid[y][x]
+                if cid is None:
+                    if (x == 0 or x == self.nx-1 or
+                        y == 0 or y == self.ny-1):
+                        row.append(' ')
+                    else:
+                        row.append('.')
+                else:
+                    comp = self.components[cid]
+                    if comp.fixed:
+                        row.append('P')
+                    else:
+                        row.append(str(comp.type))
+            print(''.join(row))
+
 if __name__ == '__main__':
     import sys
     if len(sys.argv) < 2:
@@ -143,3 +243,5 @@ if __name__ == '__main__':
     placer = Placer(sys.argv[1])
     print(f"Components loaded: {len(placer.components)}")
     print(f"Nets loaded: {len(placer.nets)}")
+    placer.initial_placement()
+    placer.render()
