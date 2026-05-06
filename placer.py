@@ -120,6 +120,7 @@ class Placer:
         counts = {t: len(v) for t, v in self.sites_by_type.items()}
         print(f"Grid: Core sites by type: {counts}")
 
+#cell -> list of nets it belongs to, helps us know which nets are affected when we move a cell
     def _build_cell_to_nets(self):
         for net_idx, net in enumerate(self.nets):
             for cell_id in net:
@@ -129,25 +130,25 @@ class Placer:
         random.seed(seed)
         
         cells_by_type = defaultdict(list)
-        for comp in self.components.values():
+        for comp in self.components.values():#group cells by type
             if not comp.fixed:
                 cells_by_type[comp.type].append(comp.id)
         
-        for t, cell_ids in cells_by_type.items():
+        for t, cell_ids in cells_by_type.items():# for each cell type, take available sites and shuffle them
             sites = list(self.sites_by_type[t])
             random.shuffle(sites)
             
             if len(cell_ids) > len(sites):
                 raise RuntimeError(f"Not enough T{t} sites for {len(cell_ids)} cells")
             
-            for cell_id, (x, y) in zip(cell_ids, sites):
+            for cell_id, (x, y) in zip(cell_ids, sites):#put cells on sites
                 comp = self.components[cell_id]
                 comp.x = x
                 comp.y = y
                 self.grid[y][x] = cell_id
                 self.empty_by_type[t].discard((x, y))  # mark site as occupied
 
-    def compute_hpwl(self):
+    def compute_hpwl(self):#calculates hpwl for all nets
         total = 0
         for net in self.nets:
             xs = [self.components[i].x for i in net]
@@ -155,22 +156,22 @@ class Placer:
             total += (max(xs) - min(xs)) + (max(ys) - min(ys))
         return total
 
-    def _net_hpwl(self, net_idx):
+    def _net_hpwl(self, net_idx):#Like compute hpwl but for one net only
         net = self.nets[net_idx]
         xs = [self.components[i].x for i in net]
         ys = [self.components[i].y for i in net]
         return (max(xs) - min(xs)) + (max(ys) - min(ys))
 
 
-
+#checks if move will cause an increase or dec in hpwl
     def hpwl_delta(self, id_a, id_b, xa, ya, xb, yb):
-        affected = set(self.cell_to_nets[id_a])
+        affected = set(self.cell_to_nets[id_a])#get affected nets
         if id_b is not None:
-            affected |= set(self.cell_to_nets[id_b])
+            affected |= set(self.cell_to_nets[id_b])#union
 
         cost_before = sum(self._net_hpwl(ni) for ni in affected)
 
-        # Temporarily update coordinates to compute delta without touching grid or empty_by_type
+        # Temporarily update coordinates to compute delta 
         self.components[id_a].x = xb
         self.components[id_a].y = yb
         if id_b is not None:
@@ -269,7 +270,7 @@ class Placer:
 
     
     def generate_move(self):
-        id_a = random.choice(self.movable_cells)
+        id_a = random.choice(self.movable_cells)# pick a random movable cell
         comp_a = self.components[id_a]
         t = comp_a.type
 
@@ -280,9 +281,9 @@ class Placer:
         candidates = same_type_cells + empty_sites  
         if not candidates:
             return None  
-        target = random.choice(candidates)
+        target = random.choice(candidates)#candidate can be either another movable cell or an empty site
 
-        if isinstance(target, tuple):
+        if isinstance(target, tuple):#empty site if tuple
             xb, yb = target
             return (id_a, None, comp_a.x, comp_a.y, xb, yb)
         else:
@@ -306,12 +307,12 @@ class Placer:
             self.components[id_b].x = xa
             self.components[id_b].y = ya
         else:
-            # Swap with empty (in order to maintain empty_by_type correctly)
+            # Swap with empty to maintain empty_by_type correctly
             self.empty_by_type[t].add((xa, ya))
             self.empty_by_type[t].discard((xb, yb))
 
 
-
+#build the output in the terminal
     def render(self):
         for y in range(self.ny):
             row = []
