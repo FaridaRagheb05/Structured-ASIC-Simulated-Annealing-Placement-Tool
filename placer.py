@@ -223,7 +223,12 @@ class Placer:
 
         history = [(T, current_cost)]
 
+        reheats_done = 0
+        max_reheats = 5
+        reheat_factor = 4.0
+
         while T > T_final:
+            accepted = 0
             for _ in range(moves_per_T):
                 move = self.generate_move()
                 if move is None:
@@ -235,6 +240,7 @@ class Placer:
                 if delta <= 0 or random.random() < math.exp(-delta / T):
                     self.apply_move(id_a, id_b, xa, ya, xb, yb)
                     current_cost += delta
+                    accepted += 1
 
                     if current_cost < best_cost:
                         best_cost = current_cost
@@ -243,9 +249,13 @@ class Placer:
                             for cid in self.movable_cells
                         }
 
-
             T *= cooling_rate
             history.append((T, current_cost))
+
+            acceptance_rate = accepted / moves_per_T
+            if acceptance_rate < 0.10 and reheats_done < max_reheats:
+                T = min(T * reheat_factor, 500 * initial_cost * 0.1)
+                reheats_done += 1
 
             # if verbose:
                 # print(f"T={T:.4f}, cost={current_cost}")
