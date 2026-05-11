@@ -2,6 +2,7 @@ from collections import defaultdict
 import random
 import math
 import copy
+import time
 
 master_Tile = [
     [0, 1, 0, 2, 0],
@@ -41,11 +42,15 @@ class Placer:
         self.empty_by_type = defaultdict(set)
         self.cell_to_nets = defaultdict(list)
         self.movable_cells = [] 
-        
+        self.cells_by_type = defaultdict(list)
+
         self._parse_Input(netlist_path)
         self._build_Grid()
         self._build_cell_to_nets()
         self.movable_cells = [c.id for c in self.components.values() if not c.fixed]
+        self.cells_by_type = defaultdict(list)
+        for cid in self.movable_cells:
+            self.cells_by_type[self.components[cid].type].append(cid)
 
 
     def _parse_Input(self, input_File):
@@ -95,7 +100,7 @@ class Placer:
             attached_IDs = [int(line[i]) for i in range(1, NumAttached + 1)]
             self.nets.append(attached_IDs)
 
-        print(f"Parsed {NumCells} components, {NumNets} nets, grid {self.ny}x{self.nx}, {NumFixedPins} pins")
+        # print(f"Parsed {NumCells} components, {NumNets} nets, grid {self.ny}x{self.nx}, {NumFixedPins} pins")
 
     def _is_Valid_Pin_Coord(self, x, y):
         """Check if pin coordinates are on perimeter (row 0, row ny-1, col 0, col nx-1)."""
@@ -118,7 +123,7 @@ class Placer:
                 self.empty_by_type[t].add((x, y))
 
         counts = {t: len(v) for t, v in self.sites_by_type.items()}
-        print(f"Grid: Core sites by type: {counts}")
+        # print(f"Grid: Core sites by type: {counts}")
 
 #cell -> list of nets it belongs to, helps us know which nets are affected when we move a cell
     def _build_cell_to_nets(self):
@@ -211,9 +216,10 @@ class Placer:
         best_cost = current_cost
 
         best_positions = {
-            cid: (comp.x, comp.y)
-            for cid, comp in self.components.items()
+            cid: (self.components[cid].x, self.components[cid].y)
+            for cid in self.movable_cells
         }
+        
 
         history = [(T, current_cost)]
 
@@ -233,15 +239,16 @@ class Placer:
                     if current_cost < best_cost:
                         best_cost = current_cost
                         best_positions = {
-                            cid: (comp.x, comp.y)
-                            for cid, comp in self.components.items()
+                            cid: (self.components[cid].x, self.components[cid].y)
+                            for cid in self.movable_cells
                         }
+
 
             T *= cooling_rate
             history.append((T, current_cost))
 
-            if verbose:
-                print(f"T={T:.4f}, cost={current_cost}")
+            # if verbose:
+                # print(f"T={T:.4f}, cost={current_cost}")
 
         # Restore best solution
         for cid, (x, y) in best_positions.items():
@@ -273,9 +280,7 @@ class Placer:
         id_a = random.choice(self.movable_cells)# pick a random movable cell
         comp_a = self.components[id_a]
         t = comp_a.type
-
-        same_type_cells = [c.id for c in self.components.values()
-                        if not c.fixed and c.type == t and c.id != id_a]
+        same_type_cells = [c for c in self.cells_by_type[t] if c != id_a]
         empty_sites = list(self.empty_by_type[t])
 
         candidates = same_type_cells + empty_sites  
@@ -338,16 +343,18 @@ if __name__ == '__main__':
         print("Usage: python placer_parsing.py <netlist_file>")
         sys.exit(1)
 
+    start = time.time()
+
     placer = Placer(sys.argv[1])
-    print(f"Components loaded: {len(placer.components)}")
-    print(f"Nets loaded: {len(placer.nets)}")
     placer.initial_placement()
 
     initial_cost = placer.compute_hpwl()
     print("Initial HPWL:", initial_cost)
 
-    best_cost, history = placer.anneal(cooling_rate=0.95, verbose=True)
+    best_cost, history = placer.anneal(cooling_rate=0.95, verbose=False)
 
+    elapsed = time.time() - start
     print("Final HPWL:", best_cost)
+    print(f"Runtime: {elapsed:.2f}s")
 
     placer.render()
