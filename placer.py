@@ -223,9 +223,17 @@ class Placer:
 
         history = [(T, current_cost)]
 
+        T_init = T  
+        max_dim = max(self.nx, self.ny)
+
         while T > T_final:
+            t_ratio = T / T_init
+            max_range = max(2, int(t_ratio * max_dim))
+
             for _ in range(moves_per_T):
-                move = self.generate_move()
+                move = self.generate_move(max_range=max_range)
+                if move is None:
+                    move = self.generate_move()
                 if move is None:
                     continue
 
@@ -276,24 +284,55 @@ class Placer:
     
 
     
-    def generate_move(self):
-        id_a = random.choice(self.movable_cells)# pick a random movable cell
+    # def generate_move(self):
+    #     id_a = random.choice(self.movable_cells)# pick a random movable cell
+    #     comp_a = self.components[id_a]
+    #     t = comp_a.type
+    #     same_type_cells = [c for c in self.cells_by_type[t] if c != id_a]
+    #     empty_sites = list(self.empty_by_type[t])
+
+    #     candidates = same_type_cells + empty_sites  
+    #     if not candidates:
+    #         return None  
+    #     target = random.choice(candidates)#candidate can be either another movable cell or an empty site
+
+    #     if isinstance(target, tuple):#empty site if tuple
+    #         xb, yb = target
+    #         return (id_a, None, comp_a.x, comp_a.y, xb, yb)
+    #     else:
+    #         comp_b = self.components[target]
+    #         return (id_a, target, comp_a.x, comp_a.y, comp_b.x, comp_b.y)
+  
+    def generate_move(self, max_range=None):
+        id_a = random.choice(self.movable_cells)
         comp_a = self.components[id_a]
         t = comp_a.type
-        same_type_cells = [c for c in self.cells_by_type[t] if c != id_a]
-        empty_sites = list(self.empty_by_type[t])
+        xa, ya = comp_a.x, comp_a.y
 
-        candidates = same_type_cells + empty_sites  
+        if max_range is None:
+            same_type_cells = [c for c in self.cells_by_type[t] if c != id_a]
+            empty_sites = list(self.empty_by_type[t])
+        else:
+            same_type_cells = [
+                c for c in self.cells_by_type[t]
+                if c != id_a and abs(self.components[c].x - xa) + abs(self.components[c].y - ya) <= max_range
+            ]
+            empty_sites = [
+                (x, y) for (x, y) in self.empty_by_type[t]
+                if abs(x - xa) + abs(y - ya) <= max_range
+            ]
+
+        candidates = same_type_cells + empty_sites
         if not candidates:
-            return None  
-        target = random.choice(candidates)#candidate can be either another movable cell or an empty site
+            return None
 
-        if isinstance(target, tuple):#empty site if tuple
+        target = random.choice(candidates)
+        if isinstance(target, tuple):
             xb, yb = target
-            return (id_a, None, comp_a.x, comp_a.y, xb, yb)
+            return (id_a, None, xa, ya, xb, yb)
         else:
             comp_b = self.components[target]
-            return (id_a, target, comp_a.x, comp_a.y, comp_b.x, comp_b.y)
+            return (id_a, target, xa, ya, comp_b.x, comp_b.y)
 
 
     def apply_move(self, id_a, id_b, xa, ya, xb, yb):
