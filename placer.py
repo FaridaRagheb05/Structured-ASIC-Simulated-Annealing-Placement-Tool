@@ -153,6 +153,54 @@ class Placer:
                 self.grid[y][x] = cell_id
                 self.empty_by_type[t].discard((x, y))  # mark site as occupied
 
+    def force_directed_placement(self, seed=42, iterations=50, step_size=0.5):
+        random.seed(seed)
+
+        x_min, x_max = 1, self.nx - 2
+        y_min, y_max = 1, self.ny - 2
+        pos = {cid: (random.uniform(x_min, x_max), random.uniform(y_min, y_max))
+               for cid in self.movable_cells}
+
+        for cid, comp in self.components.items():
+            if comp.fixed:
+                pos[cid] = (comp.x, comp.y)
+
+        for _ in range(iterations):
+            forces = {cid: [0.0, 0.0] for cid in self.movable_cells}
+
+            for net in self.nets:
+                if len(net) < 2:
+                    continue
+                cx = sum(pos[i][0] for i in net) / len(net)
+                cy = sum(pos[i][1] for i in net) / len(net)
+                for cid in net:
+                    if cid in forces:
+                        forces[cid][0] += cx - pos[cid][0]
+                        forces[cid][1] += cy - pos[cid][1]
+
+            for cid in self.movable_cells:
+                fx, fy = forces[cid]
+                nx_ = pos[cid][0] + step_size * fx
+                ny_ = pos[cid][1] + step_size * fy
+                pos[cid] = (
+                    max(x_min, min(x_max, nx_)),
+                    max(y_min, min(y_max, ny_))
+                )
+
+        for t in range(4):
+            cells = sorted(
+                [(cid, pos[cid]) for cid in self.movable_cells
+                 if self.components[cid].type == t],
+                key=lambda item: (item[1][0], item[1][1])
+            )
+            sites = sorted(self.sites_by_type[t], key=lambda s: (s[0], s[1]))
+
+            for (cid, _), (sx, sy) in zip(cells, sites):
+                comp = self.components[cid]
+                comp.x, comp.y = sx, sy
+                self.grid[sy][sx] = cid
+                self.empty_by_type[t].discard((sx, sy))
+
     def compute_hpwl(self):#calculates hpwl for all nets
         total = 0
         for net in self.nets:
@@ -346,7 +394,7 @@ if __name__ == '__main__':
     start = time.time()
 
     placer = Placer(sys.argv[1])
-    placer.initial_placement()
+    placer.force_directed_placement()
 
     initial_cost = placer.compute_hpwl()
     print("Initial HPWL:", initial_cost)
