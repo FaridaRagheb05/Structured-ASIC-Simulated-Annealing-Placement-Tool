@@ -364,4 +364,4 @@ if __name__ == '__main__':
     print("Final HPWL:", best_cost)
     print(f"Runtime: {elapsed:.2f}s")
 
-    placer.render()i
+    placer.render()
