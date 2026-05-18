@@ -1,7 +1,6 @@
 from collections import defaultdict
 import random
 import math
-import copy
 import time
 
 master_Tile = [
@@ -18,6 +17,8 @@ def site_Type(x, y):
 # needed data structures
 
 class Component:
+    __slots__ = ('id', 'type', 'x', 'y', 'fixed')
+
     def __init__(self, ID, Type, X_Coord=None, Y_Coord=None, Fixed=False):
         self.id = ID
         self.type = Type  # int (0 to 3) for cells (T0-T3) and set to -1 for pins
@@ -201,16 +202,18 @@ class Placer:
             return True
         return random.random() < math.exp(-delta_cost / temperature)
 
-    def anneal(self, cooling_rate=0.95, verbose=False):
+    def anneal(self, cooling_rate=0.95, verbose=False, max_seconds=45):
+        start_time = time.time()
         initial_cost = self.compute_hpwl()
         num_nets = len(self.nets)
+        num_cells = len(self.movable_cells)
 
         
         T = 500 * initial_cost
         
-        T_final = (5e-5 * initial_cost) / num_nets
+        T_final = (1e-4 * initial_cost) / num_nets
 
-        moves_per_T = 20 * len(self.movable_cells)
+        moves_per_T = max(100, min(1000, 10 * num_cells))
 
         current_cost = initial_cost
         best_cost = current_cost
@@ -225,12 +228,19 @@ class Placer:
 
         T_init = T  
         max_dim = max(self.nx, self.ny)
+        no_improve_count = 0
+        max_no_improve = 20 + (5 if num_cells < 500 else 0)
 
         while T > T_final:
+            if time.time() - start_time >= max_seconds:
+                break
+            cost_before = current_cost
             t_ratio = T / T_init
             max_range = max(2, int(t_ratio * max_dim))
 
             for _ in range(moves_per_T):
+                if time.time() - start_time >= max_seconds:
+                    break
                 move = self.generate_move(max_range=max_range)
                 if move is None:
                     move = self.generate_move()
@@ -254,6 +264,14 @@ class Placer:
 
             T *= cooling_rate
             history.append((T, current_cost))
+
+            if current_cost >= cost_before:
+                no_improve_count += 1
+            else:
+                no_improve_count = 0
+
+            if no_improve_count >= max_no_improve:
+                break
 
             # if verbose:
                 # print(f"T={T:.4f}, cost={current_cost}")
@@ -284,55 +302,35 @@ class Placer:
     
 
     
-    # def generate_move(self):
-    #     id_a = random.choice(self.movable_cells)# pick a random movable cell
-    #     comp_a = self.components[id_a]
-    #     t = comp_a.type
-    #     same_type_cells = [c for c in self.cells_by_type[t] if c != id_a]
-    #     empty_sites = list(self.empty_by_type[t])
-
-    #     candidates = same_type_cells + empty_sites  
-    #     if not candidates:
-    #         return None  
-    #     target = random.choice(candidates)#candidate can be either another movable cell or an empty site
-
-    #     if isinstance(target, tuple):#empty site if tuple
-    #         xb, yb = target
-    #         return (id_a, None, comp_a.x, comp_a.y, xb, yb)
-    #     else:
-    #         comp_b = self.components[target]
-    #         return (id_a, target, comp_a.x, comp_a.y, comp_b.x, comp_b.y)
-  
     def generate_move(self, max_range=None):
         id_a = random.choice(self.movable_cells)
         comp_a = self.components[id_a]
         t = comp_a.type
         xa, ya = comp_a.x, comp_a.y
 
-        if max_range is None:
-            same_type_cells = [c for c in self.cells_by_type[t] if c != id_a]
-            empty_sites = list(self.empty_by_type[t])
-        else:
-            same_type_cells = [
-                c for c in self.cells_by_type[t]
-                if c != id_a and abs(self.components[c].x - xa) + abs(self.components[c].y - ya) <= max_range
-            ]
-            empty_sites = [
-                (x, y) for (x, y) in self.empty_by_type[t]
-                if abs(x - xa) + abs(y - ya) <= max_range
-            ]
-
-        candidates = same_type_cells + empty_sites
-        if not candidates:
+        same_type_cells = self.cells_by_type[t]
+        empty_sites = self.empty_by_type[t]
+        candidates = len(same_type_cells) - 1 + len(empty_sites)
+        if candidates <= 0:
             return None
 
-        target = random.choice(candidates)
-        if isinstance(target, tuple):
-            xb, yb = target
-            return (id_a, None, xa, ya, xb, yb)
-        else:
-            comp_b = self.components[target]
-            return (id_a, target, xa, ya, comp_b.x, comp_b.y)
+        for _ in range(8):
+            use_cell = same_type_cells and (not empty_sites or random.random() < 0.5)
+            if use_cell:
+                target = random.choice(same_type_cells)
+                if target == id_a:
+                    continue
+                comp_b = self.components[target]
+                if max_range is None or abs(comp_b.x - xa) + abs(comp_b.y - ya) <= max_range:
+                    return (id_a, target, xa, ya, comp_b.x, comp_b.y)
+            elif empty_sites:
+                xb, yb = random.choice(tuple(empty_sites))
+                if max_range is None or abs(xb - xa) + abs(yb - ya) <= max_range:
+                    return (id_a, None, xa, ya, xb, yb)
+
+        if max_range is not None:
+            return self.generate_move(max_range=None)
+        return None
 
 
     def apply_move(self, id_a, id_b, xa, ya, xb, yb):
