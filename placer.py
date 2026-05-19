@@ -191,14 +191,14 @@ class Placer:
             self.empty_by_type[t].add((xa, ya))
             self.empty_by_type[t].discard((xb, yb))
 
-    def anneal(self, cooling_rate=0.95):
+    def anneal(self, cooling_rate=0.95, on_step=None):
         initial_cost = self.compute_hpwl()
         num_nets = len(self.nets)
         num_cells = len(self.movable_cells)
 
         T = 500 * initial_cost
         T_final = (1e-4 * initial_cost) / num_nets
-        
+
         # SPEED: Reduce moves_per_T for large designs
         if num_cells > 500:
             moves_per_T = max(10 * num_cells // (num_cells // 100), 100)  # Scale down for huge designs
@@ -214,7 +214,7 @@ class Placer:
         max_no_improve = 20 + (5 if num_cells < 500 else 0)  # More aggressive for large
 
         iteration = 0
-        
+
         # PRE-COMPUTE same-type cell lists
         same_type_by_id = {}
         for cell_id in self.movable_cells:
@@ -226,7 +226,7 @@ class Placer:
 
         while T > T_final:
             cost_before = current_cost
-            
+
             for _ in range(moves_per_T):
                 move = self._gen_move_fast(same_type_by_id)
                 if move is None:
@@ -249,6 +249,10 @@ class Placer:
 
             T *= cooling_rate
             iteration += 1
+            history.append((T, current_cost))
+
+            if on_step is not None:
+                on_step(T, current_cost)
 
             if current_cost >= cost_before - 1e-6:
                 no_improve_count += 1
@@ -339,12 +343,18 @@ class Placer:
 
 def main():
     if len(sys.argv) < 2:
-        print("Usage: python placer.py <netlist_file> [--2opt] [--no-render]")
+        print("Usage: python placer.")
         sys.exit(1)
 
     netlist_file = sys.argv[1]
-    use_2opt = '--2opt' in sys.argv
-    no_render = '--no-render' in sys.argv
+    use_2opt = '2opt' in sys.argv
+    no_render = 'norender' in sys.argv
+    show = 'show' in sys.argv
+
+    cr = 0.95
+    if 'cr' in sys.argv:
+        i = sys.argv.index('cr')
+        cr = float(sys.argv[i + 1])
 
     start = time.time()
 
@@ -352,7 +362,12 @@ def main():
     placer.initial_placement()
     initial_cost = placer.compute_hpwl()
 
-    final_cost, _ = placer.anneal(cooling_rate=0.95)
+    collector = None
+    if show:
+        from visualize import SnapshotCollector
+        collector = SnapshotCollector(placer)
+
+    final_cost, history = placer.anneal(cooling_rate=cr, on_step=collector)
 
     if use_2opt:
         placer.refine_2opt(max_time=3)
@@ -363,10 +378,13 @@ def main():
 
     print(f"Init: {initial_cost:.0f}  Final: {final_cost:.0f}  Improve: {improvement:.1f}%  Time: {elapsed:.2f}s")
     print()
-    
-    # Always render grid unless --no-render is specified
+
     if not no_render:
         placer.render_grid()
+
+    if show:
+        from visualize import show_progress_snapshots
+        show_progress_snapshots(collector.get_snapshots(6), placer)
 
 
 if __name__ == '__main__':
