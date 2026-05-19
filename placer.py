@@ -36,11 +36,14 @@ class Placer:
         self.empty_by_type = defaultdict(set)
         self.cell_to_nets = defaultdict(list)
         self.movable_cells = []
+        self.cells_by_type = defaultdict(list)
         
         self._parse_Input(netlist_path)
         self._build_Grid()
         self._build_cell_to_nets()
         self.movable_cells = [c.id for c in self.components.values() if not c.fixed]
+        for cid in self.movable_cells:
+            self.cells_by_type[self.components[cid].type].append(cid)
 
 
     def _parse_Input(self, input_File):
@@ -154,19 +157,20 @@ class Placer:
         comp_a = self.components[id_a]
         t = comp_a.type
 
-        same_type_cells = [
-            c.id for c in self.components.values()
-            if not c.fixed and c.type == t and c.id != id_a
-        ]
+        same_type_cells = self.cells_by_type[t]
 
         empty_set = self.empty_by_type[t]
 
-        candidates = len(same_type_cells) + len(empty_set)
-        if candidates == 0:
+        candidates = len(same_type_cells) - 1 + len(empty_set)
+        if candidates <= 0:
             return None  
 
         if same_type_cells and (not empty_set or random.random() < 0.5):
             target = random.choice(same_type_cells)
+            if target == id_a and len(same_type_cells) > 1:
+                target = random.choice([c for c in same_type_cells if c != id_a])
+            if target == id_a:
+                return None
             comp_b = self.components[target]
             return (id_a, target, comp_a.x, comp_a.y, comp_b.x, comp_b.y)
         else:
@@ -191,7 +195,8 @@ class Placer:
             self.empty_by_type[t].add((xa, ya))
             self.empty_by_type[t].discard((xb, yb))
 
-    def anneal(self, cooling_rate=0.95):
+    def anneal(self, cooling_rate=0.95, max_seconds=40):
+        start_time = time.time()
         initial_cost = self.compute_hpwl()
         num_nets = len(self.nets)
         num_cells = len(self.movable_cells)
@@ -199,11 +204,8 @@ class Placer:
         T = 500 * initial_cost
         T_final = (1e-4 * initial_cost) / num_nets
         
-        # SPEED: Reduce moves_per_T for large designs
-        if num_cells > 500:
-            moves_per_T = max(10 * num_cells // (num_cells // 100), 100)  # Scale down for huge designs
-        else:
-            moves_per_T = 20 * num_cells
+        moves_per_T = max(100, min(1000, 10 * num_cells))
+        lookahead_samples = 8 if num_cells <= 500 else 4
 
         current_cost = initial_cost
         best_cost = current_cost
@@ -219,21 +221,22 @@ class Placer:
         same_type_by_id = {}
         for cell_id in self.movable_cells:
             t = self.components[cell_id].type
-            same_type_by_id[cell_id] = [
-                c.id for c in self.components.values()
-                if not c.fixed and c.type == t and c.id != cell_id
-            ]
+            same_type_by_id[cell_id] = self.cells_by_type[t]
 
         while T > T_final:
+            if time.time() - start_time >= max_seconds:
+                break
             cost_before = current_cost
             
             for _ in range(moves_per_T):
-                move = self._gen_move_fast(same_type_by_id)
+                if time.time() - start_time >= max_seconds:
+                    break
+
+                move, delta = self._gen_greedy_move(same_type_by_id, lookahead_samples)
                 if move is None:
                     continue
 
                 id_a, id_b, xa, ya, xb, yb = move
-                delta = self.hpwl_delta(id_a, id_b, xa, ya, xb, yb)
 
                 if delta <= 0 or random.random() < math.exp(-delta / T):
                     self.apply_move(id_a, id_b, xa, ya, xb, yb)
@@ -275,12 +278,16 @@ class Placer:
         same_type_cells = same_type_by_id[id_a]
         empty_set = self.empty_by_type[t]
 
-        candidates = len(same_type_cells) + len(empty_set)
-        if candidates == 0:
+        candidates = len(same_type_cells) - 1 + len(empty_set)
+        if candidates <= 0:
             return None  
 
         if same_type_cells and (not empty_set or random.random() < 0.5):
             target = random.choice(same_type_cells)
+            if target == id_a and len(same_type_cells) > 1:
+                target = random.choice([c for c in same_type_cells if c != id_a])
+            if target == id_a:
+                return None
             comp_b = self.components[target]
             return (id_a, target, comp_a.x, comp_a.y, comp_b.x, comp_b.y)
         else:
@@ -288,6 +295,23 @@ class Placer:
                 return None
             site = random.choice(list(empty_set))
             return (id_a, None, comp_a.x, comp_a.y, site[0], site[1])
+
+    def _gen_greedy_move(self, same_type_by_id, samples):
+        """BONUS: score a small look-ahead window and prefer the highest-gain move."""
+        best_move = None
+        best_delta = None
+
+        for _ in range(samples):
+            move = self._gen_move_fast(same_type_by_id)
+            if move is None:
+                continue
+
+            delta = self.hpwl_delta(*move)
+            if best_delta is None or delta < best_delta:
+                best_move = move
+                best_delta = delta
+
+        return best_move, best_delta
 
     def _rebuild_grid(self):
         self.grid = [[None] * self.nx for _ in range(self.ny)]
