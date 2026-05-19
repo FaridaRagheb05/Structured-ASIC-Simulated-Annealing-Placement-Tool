@@ -37,7 +37,7 @@ class Placer:
         self.cell_to_nets = defaultdict(list)
         self.movable_cells = []
         self.cells_by_type = defaultdict(list)
-        
+
         self._parse_Input(netlist_path)
         self._build_Grid()
         self._build_cell_to_nets()
@@ -98,16 +98,16 @@ class Placer:
 
     def initial_placement(self, seed=42):
         random.seed(seed)
-        
+
         cells_by_type = defaultdict(list)
         for comp in self.components.values():
             if not comp.fixed:
                 cells_by_type[comp.type].append(comp.id)
-        
+
         for t, cell_ids in cells_by_type.items():
             sites = list(self.sites_by_type[t])
             random.shuffle(sites)
-            
+
             for cell_id, (x, y) in zip(cell_ids, sites):
                 comp = self.components[cell_id]
                 comp.x = x
@@ -156,14 +156,12 @@ class Placer:
         id_a = random.choice(self.movable_cells)
         comp_a = self.components[id_a]
         t = comp_a.type
-
         same_type_cells = self.cells_by_type[t]
-
         empty_set = self.empty_by_type[t]
 
         candidates = len(same_type_cells) - 1 + len(empty_set)
         if candidates <= 0:
-            return None  
+            return None
 
         if same_type_cells and (not empty_set or random.random() < 0.5):
             target = random.choice(same_type_cells)
@@ -195,7 +193,7 @@ class Placer:
             self.empty_by_type[t].add((xa, ya))
             self.empty_by_type[t].discard((xb, yb))
 
-    def anneal(self, cooling_rate=0.95, max_seconds=40):
+    def anneal(self, cooling_rate=0.95, on_step=None, max_seconds=40):
         start_time = time.time()
         initial_cost = self.compute_hpwl()
         num_nets = len(self.nets)
@@ -203,7 +201,7 @@ class Placer:
 
         T = 500 * initial_cost
         T_final = (1e-4 * initial_cost) / num_nets
-        
+
         moves_per_T = max(100, min(1000, 10 * num_cells))
         lookahead_samples = 8 if num_cells <= 500 else 4
 
@@ -213,11 +211,10 @@ class Placer:
 
         history = []
         no_improve_count = 0
-        max_no_improve = 20 + (5 if num_cells < 500 else 0)  # More aggressive for large
+        max_no_improve = 20 + (5 if num_cells < 500 else 0)
 
         iteration = 0
-        
-        # PRE-COMPUTE same-type cell lists
+
         same_type_by_id = {}
         for cell_id in self.movable_cells:
             t = self.components[cell_id].type
@@ -226,8 +223,9 @@ class Placer:
         while T > T_final:
             if time.time() - start_time >= max_seconds:
                 break
+
             cost_before = current_cost
-            
+
             for _ in range(moves_per_T):
                 if time.time() - start_time >= max_seconds:
                     break
@@ -252,6 +250,10 @@ class Placer:
 
             T *= cooling_rate
             iteration += 1
+            history.append((T, current_cost))
+
+            if on_step is not None:
+                on_step(T, current_cost)
 
             if current_cost >= cost_before - 1e-6:
                 no_improve_count += 1
@@ -270,17 +272,15 @@ class Placer:
         return best_cost, history
 
     def _gen_move_fast(self, same_type_by_id):
-        """Fast move generation using pre-computed same-type lists."""
         id_a = random.choice(self.movable_cells)
         comp_a = self.components[id_a]
         t = comp_a.type
-
         same_type_cells = same_type_by_id[id_a]
         empty_set = self.empty_by_type[t]
 
         candidates = len(same_type_cells) - 1 + len(empty_set)
         if candidates <= 0:
-            return None  
+            return None
 
         if same_type_cells and (not empty_set or random.random() < 0.5):
             target = random.choice(same_type_cells)
@@ -297,7 +297,6 @@ class Placer:
             return (id_a, None, comp_a.x, comp_a.y, site[0], site[1])
 
     def _gen_greedy_move(self, same_type_by_id, samples):
-        """BONUS: score a small look-ahead window and prefer the highest-gain move."""
         best_move = None
         best_delta = None
 
@@ -320,7 +319,6 @@ class Placer:
                 self.grid[comp.y][comp.x] = comp.id
 
     def refine_2opt(self, max_time=3):
-        """BONUS: 2-opt local search refinement (5-10% improvement)."""
         start_t = time.time()
         improved = True
 
@@ -349,7 +347,6 @@ class Placer:
                         break
 
     def render_grid(self):
-        """BONUS: Graphical output of final placement."""
         for y in range(self.ny):
             row = []
             for x in range(self.nx):
@@ -363,12 +360,18 @@ class Placer:
 
 def main():
     if len(sys.argv) < 2:
-        print("Usage: python placer.py <netlist_file> [--2opt] [--no-render]")
+        print("Usage: python placer.")
         sys.exit(1)
 
     netlist_file = sys.argv[1]
-    use_2opt = '--2opt' in sys.argv
-    no_render = '--no-render' in sys.argv
+    use_2opt = '2opt' in sys.argv
+    no_render = 'norender' in sys.argv
+    show = 'show' in sys.argv
+
+    cr = 0.95
+    if 'cr' in sys.argv:
+        i = sys.argv.index('cr')
+        cr = float(sys.argv[i + 1])
 
     start = time.time()
 
@@ -376,7 +379,12 @@ def main():
     placer.initial_placement()
     initial_cost = placer.compute_hpwl()
 
-    final_cost, _ = placer.anneal(cooling_rate=0.95)
+    collector = None
+    if show:
+        from visualize import SnapshotCollector
+        collector = SnapshotCollector(placer)
+
+    final_cost, _ = placer.anneal(cooling_rate=cr, on_step=collector)
 
     if use_2opt:
         placer.refine_2opt(max_time=3)
@@ -387,10 +395,13 @@ def main():
 
     print(f"Init: {initial_cost:.0f}  Final: {final_cost:.0f}  Improve: {improvement:.1f}%  Time: {elapsed:.2f}s")
     print()
-    
-    # Always render grid unless --no-render is specified
+
     if not no_render:
         placer.render_grid()
+
+    if show:
+        from visualize import show_progress_snapshots
+        show_progress_snapshots(collector.get_snapshots(6), placer)
 
 
 if __name__ == '__main__':
