@@ -143,7 +143,7 @@ These results were measured without counting final grid rendering time. All test
 
 | Branch | Worst Runtime | Best Use |
 |---|---:|---|
-| `optimization` | 60.39s | Fast baseline, but one case is close to the limit |
+| `optimization` | 50.39s | Fast baseline, but one case is close to the limit |
 | `optimized-adaptive-reheating` | 9.09s | Very fast SA variation |
 | `optimized-force-directed-placement` | 7.07s | Fastest branch, guided initial placement |
 | `optimized-range-limiting` | 15.18s | Best overall bonus branch from the tested set |
