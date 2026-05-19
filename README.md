@@ -196,13 +196,3 @@ The code uses Python 3 and the standard library:
 
 No external Python packages are required for the core placer.
 
-## Suggested Submission Branches
-
-For the optimization challenge, the strongest branches to discuss are:
-
-1. `optimized-range-limiting`
-2. `optimized-heuristic-intelligence`
-3. `optimized-adaptive-reheating`
-4. `optimized-force-directed-placement`
-
-The report should mention that all optimized bonus branches keep placement legal and complete the extreme benchmark in under one minute.
