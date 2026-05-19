@@ -2,6 +2,7 @@ from collections import defaultdict
 import random
 import math
 import time
+import sys
 
 master_Tile = [
     [0, 1, 0, 2, 0],
@@ -14,86 +15,65 @@ master_Tile = [
 def site_Type(x, y):
     return master_Tile[(y - 1) % 5][(x - 1) % 5]
 
-# needed data structures
 
 class Component:
     __slots__ = ('id', 'type', 'x', 'y', 'fixed')
 
     def __init__(self, ID, Type, X_Coord=None, Y_Coord=None, Fixed=False):
         self.id = ID
-        self.type = Type  # int (0 to 3) for cells (T0-T3) and set to -1 for pins
+        self.type = Type
         self.x = X_Coord
         self.y = Y_Coord
-        self.fixed = Fixed  # True if pin but false if (movable) cell
-  
+        self.fixed = Fixed
+
 
 class Placer:
     def __init__(self, netlist_path):
         self.components = {}
-        self.nets = []  # list of lists of component ids
+        self.nets = []
         self.ny = self.nx = 0
-
-        # grid[y][x] -> component id or None
         self.grid = None
-
-        # type -> list of (x,y) sites in core (precomputed and static)
         self.sites_by_type = defaultdict(list)
-
-        # type -> set of (x,y) sites that are currently empty
         self.empty_by_type = defaultdict(set)
         self.cell_to_nets = defaultdict(list)
-        self.movable_cells = [] 
+        self.movable_cells = []
         self.cells_by_type = defaultdict(list)
 
         self._parse_Input(netlist_path)
         self._build_Grid()
         self._build_cell_to_nets()
         self.movable_cells = [c.id for c in self.components.values() if not c.fixed]
-        self.cells_by_type = defaultdict(list)
         for cid in self.movable_cells:
             self.cells_by_type[self.components[cid].type].append(cid)
 
 
     def _parse_Input(self, input_File):
         with open(input_File) as f:
-            # remove comments and empty lines
             lines = [l.split('#')[0].strip() for l in f]
             lines = [l for l in lines if l]
 
         index = 0
-
-        # section 1:parse global header
         header = lines[index].split()
         index += 1
         NumCells, NumNets, self.ny, self.nx, NumFixedPins = (int(v) for v in header[:5])
 
-        # section 2: parse component definitions (pins and cells)
         for _ in range(NumCells):
             line = lines[index].split()
             index += 1
             ID = int(line[0])
 
             if line[-1] == 'P':
-                # Fixed pin definition: [ID] [X_Coord] [Y_Coord] P
                 X_Coord = int(line[1])
                 Y_Coord = int(line[2])
-
-                # validate pin is on perimeter
                 if not self._is_Valid_Pin_Coord(X_Coord, Y_Coord):
                     raise ValueError(f"Pin {ID} at ({X_Coord}, {Y_Coord}) not on perimeter")
-
                 self.components[ID] = Component(ID, Type=-1, X_Coord=X_Coord, Y_Coord=Y_Coord, Fixed=True)
-
             else:
-                # Movable cell definition: [ID] [Type]
-                Type = int(line[1][1])  # "T0" -> 0, "T1" -> 1, ...
-
+                Type = int(line[1][1])
                 if Type < 0 or Type > 3:
                     raise ValueError(f"Cell {ID} has invalid type {Type}")
-
                 self.components[ID] = Component(ID, Type=Type, Fixed=False)
 
-        # Section 3: parse net connectivity
         for _ in range(NumNets):
             line = lines[index].split()
             index += 1
@@ -101,32 +81,24 @@ class Placer:
             attached_IDs = [int(line[i]) for i in range(1, NumAttached + 1)]
             self.nets.append(attached_IDs)
 
-        # print(f"Parsed {NumCells} components, {NumNets} nets, grid {self.ny}x{self.nx}, {NumFixedPins} pins")
+        print(f"Parsed {NumCells} cells, {NumNets} nets, grid {self.ny}x{self.nx}")
 
     def _is_Valid_Pin_Coord(self, x, y):
-        """Check if pin coordinates are on perimeter (row 0, row ny-1, col 0, col nx-1)."""
         return (x == 0 or x == self.nx - 1 or y == 0 or y == self.ny - 1)
 
     def _build_Grid(self):
-        """Build grid, place fixed pins, enumerate core sites by type."""
         self.grid = [[None] * self.nx for _ in range(self.ny)]
 
-        # place fixed pins on grid
         for comp in self.components.values():
             if comp.fixed:
                 self.grid[comp.y][comp.x] = comp.id
 
-        # enumerate all core sites by type
         for y in range(1, self.ny - 1):
             for x in range(1, self.nx - 1):
                 t = site_Type(x, y)
                 self.sites_by_type[t].append((x, y))
                 self.empty_by_type[t].add((x, y))
 
-        counts = {t: len(v) for t, v in self.sites_by_type.items()}
-        # print(f"Grid: Core sites by type: {counts}")
-
-#cell -> list of nets it belongs to, helps us know which nets are affected when we move a cell
     def _build_cell_to_nets(self):
         for net_idx, net in enumerate(self.nets):
             for cell_id in net:
@@ -134,27 +106,27 @@ class Placer:
 
     def initial_placement(self, seed=42):
         random.seed(seed)
-        
+
         cells_by_type = defaultdict(list)
-        for comp in self.components.values():#group cells by type
+        for comp in self.components.values():
             if not comp.fixed:
                 cells_by_type[comp.type].append(comp.id)
-        
-        for t, cell_ids in cells_by_type.items():# for each cell type, take available sites and shuffle them
+
+        for t, cell_ids in cells_by_type.items():
             sites = list(self.sites_by_type[t])
             random.shuffle(sites)
-            
+
             if len(cell_ids) > len(sites):
                 raise RuntimeError(f"Not enough T{t} sites for {len(cell_ids)} cells")
-            
-            for cell_id, (x, y) in zip(cell_ids, sites):#put cells on sites
+
+            for cell_id, (x, y) in zip(cell_ids, sites):
                 comp = self.components[cell_id]
                 comp.x = x
                 comp.y = y
                 self.grid[y][x] = cell_id
-                self.empty_by_type[t].discard((x, y))  # mark site as occupied
+                self.empty_by_type[t].discard((x, y))
 
-    def compute_hpwl(self):#calculates hpwl for all nets
+    def compute_hpwl(self):
         total = 0
         for net in self.nets:
             xs = [self.components[i].x for i in net]
@@ -162,22 +134,19 @@ class Placer:
             total += (max(xs) - min(xs)) + (max(ys) - min(ys))
         return total
 
-    def _net_hpwl(self, net_idx):#Like compute hpwl but for one net only
+    def _net_hpwl(self, net_idx):
         net = self.nets[net_idx]
         xs = [self.components[i].x for i in net]
         ys = [self.components[i].y for i in net]
         return (max(xs) - min(xs)) + (max(ys) - min(ys))
 
-
-#checks if move will cause an increase or dec in hpwl
     def hpwl_delta(self, id_a, id_b, xa, ya, xb, yb):
-        affected = set(self.cell_to_nets[id_a])#get affected nets
+        affected = set(self.cell_to_nets[id_a])
         if id_b is not None:
-            affected |= set(self.cell_to_nets[id_b])#union
+            affected |= set(self.cell_to_nets[id_b])
 
         cost_before = sum(self._net_hpwl(ni) for ni in affected)
 
-        # Temporarily update coordinates to compute delta 
         self.components[id_a].x = xb
         self.components[id_a].y = yb
         if id_b is not None:
@@ -186,7 +155,6 @@ class Placer:
 
         cost_after = sum(self._net_hpwl(ni) for ni in affected)
 
-        # Restore coordinates
         self.components[id_a].x = xa
         self.components[id_a].y = ya
         if id_b is not None:
@@ -194,39 +162,33 @@ class Placer:
             self.components[id_b].y = yb
 
         return cost_after - cost_before
-    
 
-    
     def _accept_move(self, delta_cost, temperature):
         if delta_cost <= 0:
             return True
         return random.random() < math.exp(-delta_cost / temperature)
 
-    def anneal(self, cooling_rate=0.95, verbose=False, max_seconds=45):
+    def anneal(self, cooling_rate=0.95, on_step=None, max_seconds=45):
         start_time = time.time()
         initial_cost = self.compute_hpwl()
         num_nets = len(self.nets)
         num_cells = len(self.movable_cells)
 
-        
         T = 500 * initial_cost
-        
         T_final = (1e-4 * initial_cost) / num_nets
 
         moves_per_T = max(100, min(1000, 10 * num_cells))
 
         current_cost = initial_cost
         best_cost = current_cost
-
         best_positions = {
             cid: (self.components[cid].x, self.components[cid].y)
             for cid in self.movable_cells
         }
-        
 
         history = [(T, current_cost)]
 
-        T_init = T  
+        T_init = T
         max_dim = max(self.nx, self.ny)
         no_improve_count = 0
         max_no_improve = 20 + (5 if num_cells < 500 else 0)
@@ -234,6 +196,7 @@ class Placer:
         while T > T_final:
             if time.time() - start_time >= max_seconds:
                 break
+
             cost_before = current_cost
             t_ratio = T / T_init
             max_range = max(2, int(t_ratio * max_dim))
@@ -241,6 +204,7 @@ class Placer:
             for _ in range(moves_per_T):
                 if time.time() - start_time >= max_seconds:
                     break
+
                 move = self.generate_move(max_range=max_range)
                 if move is None:
                     move = self.generate_move()
@@ -261,9 +225,11 @@ class Placer:
                             for cid in self.movable_cells
                         }
 
-
             T *= cooling_rate
             history.append((T, current_cost))
+
+            if on_step is not None:
+                on_step(T, current_cost)
 
             if current_cost >= cost_before:
                 no_improve_count += 1
@@ -273,10 +239,6 @@ class Placer:
             if no_improve_count >= max_no_improve:
                 break
 
-            # if verbose:
-                # print(f"T={T:.4f}, cost={current_cost}")
-
-        # Restore best solution
         for cid, (x, y) in best_positions.items():
             self.components[cid].x = x
             self.components[cid].y = y
@@ -285,7 +247,7 @@ class Placer:
         self._rebuild_empty_sites()
 
         return best_cost, history
-        
+
     def _rebuild_empty_sites(self):
         self.empty_by_type = defaultdict(set)
         for y in range(1, self.ny - 1):
@@ -298,10 +260,8 @@ class Placer:
         self.grid = [[None] * self.nx for _ in range(self.ny)]
         for comp in self.components.values():
             if comp.x is not None and comp.y is not None:
-                    self.grid[comp.y][comp.x] = comp.id
-    
+                self.grid[comp.y][comp.x] = comp.id
 
-    
     def generate_move(self, max_range=None):
         id_a = random.choice(self.movable_cells)
         comp_a = self.components[id_a]
@@ -332,66 +292,107 @@ class Placer:
             return self.generate_move(max_range=None)
         return None
 
-
     def apply_move(self, id_a, id_b, xa, ya, xb, yb):
         t = self.components[id_a].type
 
-        # Update grid
         self.grid[ya][xa] = id_b
         self.grid[yb][xb] = id_a
 
-        # Update component A
         self.components[id_a].x = xb
         self.components[id_a].y = yb
 
         if id_b is not None:
-            # Swap with another cell
             self.components[id_b].x = xa
             self.components[id_b].y = ya
         else:
-            # Swap with empty to maintain empty_by_type correctly
             self.empty_by_type[t].add((xa, ya))
             self.empty_by_type[t].discard((xb, yb))
 
+    def refine_2opt(self, max_time=3):
+        start_t = time.time()
+        improved = True
 
-#build the output in the terminal
-    def render(self):
+        while improved and time.time() - start_t < max_time:
+            improved = False
+
+            for i_idx in range(len(self.movable_cells)):
+                if time.time() - start_t > max_time:
+                    break
+                if improved:
+                    break
+
+                i = self.movable_cells[i_idx]
+                comp_i = self.components[i]
+
+                for j in self.movable_cells[i_idx + 1:]:
+                    comp_j = self.components[j]
+                    if comp_i.type != comp_j.type:
+                        continue
+
+                    delta = self.hpwl_delta(i, j, comp_i.x, comp_i.y, comp_j.x, comp_j.y)
+
+                    if delta < -0.5:
+                        self.apply_move(i, j, comp_i.x, comp_i.y, comp_j.x, comp_j.y)
+                        improved = True
+                        break
+
+    def render_grid(self):
         for y in range(self.ny):
             row = []
             for x in range(self.nx):
                 cid = self.grid[y][x]
                 if cid is None:
-                    if (x == 0 or x == self.nx-1 or
-                        y == 0 or y == self.ny-1):
-                        row.append(' ')
-                    else:
-                        row.append('.')
+                    row.append(' ' if (x == 0 or x == self.nx-1 or y == 0 or y == self.ny-1) else '.')
                 else:
-                    comp = self.components[cid]
-                    if comp.fixed:
-                        row.append('P')
-                    else:
-                        row.append(str(comp.type))
+                    row.append('P' if self.components[cid].fixed else str(self.components[cid].type))
             print(''.join(row))
 
-if __name__ == '__main__':
-    import sys
+
+def main():
     if len(sys.argv) < 2:
-        print("Usage: python placer_parsing.py <netlist_file>")
+        print("Usage: python placer.")
         sys.exit(1)
+
+    netlist_file = sys.argv[1]
+    use_2opt = '2opt' in sys.argv
+    no_render = 'norender' in sys.argv
+    show = 'show' in sys.argv
+
+    cr = 0.95
+    if 'cr' in sys.argv:
+        i = sys.argv.index('cr')
+        cr = float(sys.argv[i + 1])
 
     start = time.time()
 
-    placer = Placer(sys.argv[1])
+    placer = Placer(netlist_file)
     placer.initial_placement()
-
     initial_cost = placer.compute_hpwl()
-    print("Initial HPWL:", initial_cost)
 
-    best_cost, history = placer.anneal(cooling_rate=0.95, verbose=False)
+    collector = None
+    if show:
+        from visualize import SnapshotCollector
+        collector = SnapshotCollector(placer)
+
+    final_cost, _ = placer.anneal(cooling_rate=cr, on_step=collector)
+
+    if use_2opt:
+        placer.refine_2opt(max_time=3)
+        final_cost = placer.compute_hpwl()
 
     elapsed = time.time() - start
-    print("Final HPWL:", best_cost)
-    print(f"Runtime: {elapsed:.2f}s")
+    improvement = 100 * (initial_cost - final_cost) / initial_cost
 
-    placer.render()
+    print(f"Init: {initial_cost:.0f}  Final: {final_cost:.0f}  Improve: {improvement:.1f}%  Time: {elapsed:.2f}s")
+    print()
+
+    if not no_render:
+        placer.render_grid()
+
+    if show:
+        from visualize import show_progress_snapshots
+        show_progress_snapshots(collector.get_snapshots(6), placer)
+
+
+if __name__ == '__main__':
+    main()
